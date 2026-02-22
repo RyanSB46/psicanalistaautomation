@@ -1,0 +1,182 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PatientStatus {
+  ATIVO
+  INATIVO
+}
+
+enum AppointmentStatus {
+  AGENDADO
+  CONFIRMADO
+  CANCELADO
+  FALTOU
+  REMARCADO
+}
+
+enum InteractionType {
+  BOT
+  HUMANO
+  PACIENTE
+}
+
+model AdminUser {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("admins_tecnicos")
+}
+
+model Professional {
+  id                  String            @id @default(cuid())
+  name                String
+  email               String            @unique
+  passwordHash        String            @map("password_hash")
+  phoneNumber         String?           @map("phone_number")
+  professionalType    String?           @map("professional_type")
+  evolutionInstanceName String?         @unique(map: "profissionais_instance_name_key") @map("instance_name")
+  evolutionApiKey     String?           @map("evolution_api_key")
+  specialty           String?
+  consultationFeeCents Int?             @map("consultation_fee_cents")
+  timezone            String            @default("America/Sao_Paulo")
+  createdAt           DateTime          @default(now()) @map("created_at")
+  updatedAt           DateTime          @updatedAt @map("updated_at")
+  patients            Patient[]
+  appointments        Appointment[]
+  interactions        Interaction[]
+  settings            Settings?
+  whatsappSessions    WhatsappSession[]
+  availabilityBlocks  ProfessionalAvailabilityBlock[]
+
+  @@map("profissionais")
+}
+
+model ProfessionalAvailabilityBlock {
+  id             String       @id @default(cuid())
+  professionalId String       @map("profissional_id")
+  startsAt       DateTime     @map("starts_at") @db.Timestamptz(3)
+  endsAt         DateTime     @map("ends_at") @db.Timestamptz(3)
+  reason         String?
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+  professional   Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+
+  @@index([professionalId, startsAt], map: "bloqueios_agenda_profissional_id_starts_at_idx")
+  @@index([professionalId, endsAt], map: "bloqueios_agenda_profissional_id_ends_at_idx")
+  @@map("bloqueios_agenda")
+}
+
+model Patient {
+  id                 String         @id @default(cuid())
+  professionalId     String         @map("profissional_id")
+  name               String
+  phoneNumber        String         @map("phone_number")
+  email              String?
+  firstConsultationAt DateTime?     @map("first_consultation_at") @db.Timestamptz(3)
+  status             PatientStatus  @default(ATIVO)
+  createdAt          DateTime       @default(now()) @map("created_at")
+  updatedAt          DateTime       @updatedAt @map("updated_at")
+  professional       Professional   @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  appointments       Appointment[]
+  interactions       Interaction[]
+
+  @@unique([professionalId, phoneNumber], map: "pacientes_profissional_id_phone_number_key")
+  @@index([professionalId], map: "pacientes_profissional_id_idx")
+  @@index([professionalId, status], map: "pacientes_profissional_id_status_idx")
+  @@map("pacientes")
+}
+
+model Appointment {
+  id               String            @id @default(cuid())
+  professionalId   String            @map("profissional_id")
+  patientId        String            @map("paciente_id")
+  startsAt         DateTime          @map("starts_at") @db.Timestamptz(3)
+  endsAt           DateTime          @map("ends_at") @db.Timestamptz(3)
+  status           AppointmentStatus @default(AGENDADO)
+  notes            String?
+  rescheduledFromId String?          @map("remarcado_de_id")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  professional     Professional      @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  patient          Patient           @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  rescheduledFrom  Appointment?      @relation("reschedule_chain", fields: [rescheduledFromId], references: [id], onDelete: SetNull)
+  rescheduledTo    Appointment[]     @relation("reschedule_chain")
+  interactions     Interaction[]
+
+  @@index([professionalId, startsAt], map: "agendamentos_profissional_id_starts_at_idx")
+  @@index([professionalId, status], map: "agendamentos_profissional_id_status_idx")
+  @@index([patientId, startsAt], map: "agendamentos_paciente_id_starts_at_idx")
+  @@map("agendamentos")
+}
+
+model Interaction {
+  id               String          @id @default(cuid())
+  professionalId   String          @map("profissional_id")
+  patientId        String?         @map("paciente_id")
+  appointmentId    String?         @map("agendamento_id")
+  messageText      String          @map("mensagem")
+  messageType      InteractionType @map("tipo")
+  externalMessageId String?        @map("message_id")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+  professional     Professional    @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  patient          Patient?        @relation(fields: [patientId], references: [id], onDelete: SetNull)
+  appointment      Appointment?    @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+
+  @@index([professionalId, createdAt], map: "interacoes_profissional_id_created_at_idx")
+  @@index([patientId, createdAt], map: "interacoes_paciente_id_created_at_idx")
+  @@unique([professionalId, externalMessageId], map: "interacoes_profissional_id_message_id_key")
+  @@map("interacoes")
+}
+
+model Settings {
+  id                 String       @id @default(cuid())
+  professionalId     String       @unique(map: "configuracoes_profissional_id_key") @map("profissional_id")
+  welcomeMessage     String?      @map("mensagem_boas_vindas")
+  confirmationMessage String?     @map("mensagem_confirmacao")
+  cancellationPolicy String?      @map("politica_cancelamento")
+  reminderD1Enabled  Boolean      @default(true) @map("lembrete_d1_ativo")
+  reminder2hEnabled  Boolean      @default(true) @map("lembrete_2h_ativo")
+  dashboardEnabled   Boolean      @default(true) @map("feature_dashboard_ativo")
+  agendaEnabled      Boolean      @default(true) @map("feature_agenda_ativo")
+  manualActionEnabled Boolean     @default(true) @map("feature_acao_manual_agenda_ativo")
+  patientsEnabled    Boolean      @default(true) @map("feature_pacientes_ativo")
+  reportsEnabled     Boolean      @default(true) @map("feature_relatorios_ativo")
+  requestsEnabled    Boolean      @default(true) @map("feature_solicitacoes_ativo")
+  settingsEnabled    Boolean      @default(true) @map("feature_configuracoes_ativo")
+  patientPortalEnabled Boolean    @default(true) @map("feature_portal_paciente_ativo")
+  webhookEnabled     Boolean      @default(true) @map("feature_webhook_ativo")
+  timezone           String       @default("America/Sao_Paulo")
+  createdAt          DateTime     @default(now()) @map("created_at")
+  updatedAt          DateTime     @updatedAt @map("updated_at")
+  professional       Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+
+  @@map("configuracoes")
+}
+
+model WhatsappSession {
+  id               String       @id @default(cuid())
+  professionalId   String       @map("profissional_id")
+  phoneNumber      String       @map("phone_number")
+  currentState     String       @default("INITIAL") @map("current_state")
+  isActive         Boolean      @default(true) @map("is_active")
+  lastMessageAt    DateTime?    @map("last_message_at") @db.Timestamptz(3)
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+  professional     Professional @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+
+  @@unique([professionalId, phoneNumber], map: "sessoes_whatsapp_profissional_id_phone_number_key")
+  @@index([professionalId, updatedAt], map: "sessoes_whatsapp_profissional_id_updated_at_idx")
+  @@map("sessoes_whatsapp")
+}
